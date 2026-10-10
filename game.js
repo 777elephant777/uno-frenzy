@@ -1,4 +1,8 @@
-// --- Game State Variables ---
+/* ==========================================
+   UNO FRENZY - GAME ENGINE & LOGIC
+   ================================---------- */
+
+// --- Game Constants & State ---
 const VALUES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'SKIP', 'REVERSE', '+2', 'MEGA +4', 'SWAP', 'BATTLE', 'WILDFIRE', 'SHIELD'];
 let deck = [];
 let discardPile = [];
@@ -10,10 +14,15 @@ let playerHasShield = false;
 let botHasShield = false;
 let soundEnabled = true;
 
-// Persistent Stats
-let stats = JSON.parse(localStorage.getItem('uno_frenzy_stats')) || { wins: 0, losses: 0, streak: 0, battlesWon: 0 };
+// Persistent Career Stats
+let stats = JSON.parse(localStorage.getItem('uno_frenzy_stats')) || {
+  wins: 0,
+  losses: 0,
+  streak: 0,
+  battlesWon: 0
+};
 
-// DOM Elements
+// --- DOM References ---
 const drawPileEl = document.getElementById('draw-pile');
 const discardPileEl = document.getElementById('discard-pile');
 const topCardValueEl = document.getElementById('top-card-value');
@@ -22,7 +31,7 @@ const botHandEl = document.getElementById('bot-hand');
 const drawCountEl = document.getElementById('draw-count');
 const botCardCountEl = document.getElementById('bot-card-count');
 const turnIndicatorEl = document.getElementById('turn-indicator');
-const chaosBarEl = document.getElementById('chaos-bar');
+const chaosFillEl = document.getElementById('chaos-fill');
 const actionLogEl = document.getElementById('action-log');
 const eventBannerEl = document.getElementById('event-banner');
 const eventTextEl = document.getElementById('event-text');
@@ -38,56 +47,71 @@ const closeStatsBtn = document.getElementById('close-stats-btn');
 const aiDifficultySelect = document.getElementById('ai-difficulty');
 const gameContainer = document.getElementById('game-container');
 
-// --- Web Audio API Synth Sound Engine ---
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playSound(type) {
-  if (!soundEnabled) return;
+
+// --- Web Audio API Synthesizer ---
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
   if (audioCtx.state === 'suspended') {
     audioCtx.resume();
   }
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  return audioCtx;
+}
 
-  let now = audioCtx.currentTime;
-  if (type === 'play') {
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(300, now);
-    osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-    osc.start(now);
-    osc.stop(now + 0.1);
-  } else if (type === 'draw') {
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(200, now);
-    osc.frequency.linearRampToValueAtTime(400, now + 0.15);
-    gain.gain.setValueAtTime(0.15, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-    osc.start(now);
-    osc.stop(now + 0.15);
-  } else if (type === 'chaos') {
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(150, now);
-    osc.frequency.linearRampToValueAtTime(80, now + 0.4);
-    gain.gain.setValueAtTime(0.3, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-    osc.start(now);
-    osc.stop(now + 0.4);
-  } else if (type === 'win') {
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(400, now);
-    osc.frequency.setValueAtTime(600, now + 0.1);
-    osc.frequency.setValueAtTime(800, now + 0.2);
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-    osc.start(now);
-    osc.stop(now + 0.4);
+function playSound(type) {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    let now = ctx.currentTime;
+    if (type === 'play') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(650, now + 0.12);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.12);
+    } else if (type === 'draw') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.linearRampToValueAtTime(440, now + 0.15);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } else if (type === 'chaos') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.linearRampToValueAtTime(70, now + 0.45);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+      osc.start(now);
+      osc.stop(now + 0.45);
+    } else if (type === 'win') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(660, now + 0.1);
+      osc.frequency.setValueAtTime(880, now + 0.2);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+      osc.start(now);
+      osc.stop(now + 0.45);
+    }
+  } catch (e) {
+    console.warn("Audio context error:", e);
   }
 }
 
-// --- Initialize Game Engine ---
+
+// --- Game Initialization ---
 function initGame() {
   deck = createYellowDeck();
   shuffle(deck);
@@ -99,14 +123,16 @@ function initGame() {
   playerHasShield = false;
   botHasShield = false;
   chaosMeter = 0;
+  currentTurn = 'player';
   
   updateUI();
-  logAction("Game started! All cards are yellow. Prepare for maximum chaos.");
+  logAction("⚡ Game started! All cards are yellow. Prepare for maximum chaos.");
 }
 
 function createYellowDeck() {
   let newDeck = [];
   VALUES.forEach(val => {
+    // Standard cards get 3 copies, rare action cards get 2 copies
     let count = (val === 'MEGA +4' || val === 'WILDFIRE' || val === 'SHIELD') ? 2 : 3;
     for (let i = 0; i < count; i++) {
       newDeck.push({ type: 'yellow', value: val });
@@ -122,12 +148,14 @@ function shuffle(array) {
   }
 }
 
-// --- Main Play Logic ---
+
+// --- Turn & Card Execution Logic ---
 function playCard(player, index) {
   const hand = player === 'player' ? playerHand : botHand;
   const playedCard = hand[index];
   const topCard = discardPile[discardPile.length - 1];
 
+  // Rule check: Matches top card value or is an action card
   if (playedCard.value === topCard.value || isActionCard(playedCard.value) || topCard.value === 'SWAP') {
     hand.splice(index, 1);
     discardPile.push(playedCard);
@@ -137,7 +165,9 @@ function playCard(player, index) {
     increaseChaos(12);
     handleCardEffects(playedCard.value, player);
   } else {
-    if (player === 'player') logAction("⚠️ Invalid move! Match value or play an action card.");
+    if (player === 'player') {
+      logAction("⚠️ Invalid move! Match the card value or play an action card.");
+    }
   }
 }
 
@@ -145,7 +175,6 @@ function isActionCard(val) {
   return ['SKIP', 'REVERSE', '+2', 'MEGA +4', 'SWAP', 'BATTLE', 'WILDFIRE', 'SHIELD'].includes(val);
 }
 
-// --- Card Effects ---
 function handleCardEffects(value, player) {
   const opponent = player === 'player' ? 'bot' : 'player';
 
@@ -153,7 +182,8 @@ function handleCardEffects(value, player) {
     case 'SKIP':
     case 'REVERSE':
       logAction(`${player === 'player' ? 'AI' : 'Your'} turn was skipped!`);
-      break; // Keep turn with same player
+      // Turn stays with current player
+      break;
       
     case '+2':
       applyPenalty(opponent, 2);
@@ -166,7 +196,7 @@ function handleCardEffects(value, player) {
       break;
       
     case 'SWAP':
-      logAction("🌀 SWAP! Hands have been completely exchanged!");
+      logAction("🌀 SWAP! Hand contents have been completely exchanged!");
       const temp = [...playerHand];
       playerHand = [...botHand];
       botHand = temp;
@@ -183,7 +213,7 @@ function handleCardEffects(value, player) {
     case 'SHIELD':
       if (player === 'player') {
         playerHasShield = true;
-        logAction("🛡️ You activated a Shield! Protected from next penalty.");
+        logAction("🛡️ You activated a Shield! Protected from incoming penalty cards.");
       } else {
         botHasShield = true;
         logAction("🛡️ AI activated a Shield!");
@@ -207,19 +237,20 @@ function handleCardEffects(value, player) {
 function applyPenalty(targetPlayer, count) {
   if (targetPlayer === 'player' && playerHasShield) {
     playerHasShield = false;
-    logAction("🛡️ Your Shield blocked the penalty attack!");
+    logAction("🛡️ Your Shield successfully blocked the penalty attack!");
     return;
   }
   if (targetPlayer === 'bot' && botHasShield) {
     botHasShield = false;
-    logAction("🛡️ AI's Shield blocked the penalty attack!");
+    logAction("🛡️ AI's Shield successfully blocked the penalty attack!");
     return;
   }
   logAction(`${targetPlayer === 'player' ? 'You' : 'AI'} drew ${count} penalty cards!`);
   drawCards(targetPlayer, count);
 }
 
-// --- Draw Mechanics ---
+
+// --- Draw & Recycle Mechanics ---
 function drawCards(player, count = 1) {
   const hand = player === 'player' ? playerHand : botHand;
   for (let i = 0; i < count; i++) {
@@ -232,25 +263,25 @@ function drawCards(player, count = 1) {
 
 function recycleDiscard() {
   if (discardPile.length <= 1) return;
-  const top = discardPile.pop();
+  const topCard = discardPile.pop();
   deck = [...discardPile];
-  discardPile = [top];
+  discardPile = [topCard];
   shuffle(deck);
   logAction("🔄 Reshuffled discard pile into draw deck.");
 }
 
-// --- Turn Control ---
+
+// --- Turn Control & AI Strategy ---
 function switchTurn() {
   currentTurn = currentTurn === 'player' ? 'bot' : 'player';
   updateUI();
 
   if (currentTurn === 'bot') {
-    let delay = aiDifficultySelect.value === 'insane' ? 700 : 1100;
+    let delay = aiDifficultySelect.value === 'insane' ? 650 : 1050;
     setTimeout(botAI, delay);
   }
 }
 
-// --- AI Strategy Engine ---
 function botAI() {
   if (currentTurn !== 'bot') return;
 
@@ -266,7 +297,7 @@ function botAI() {
     if (difficulty === 'easy') {
       chosenIndex = playableCards[Math.floor(Math.random() * playableCards.length)].index;
     } else {
-      // Chaotic / Insane: Prefer action cards if player has low cards
+      // Chaotic / Insane AI prioritizes action cards when player has few cards left
       let actionMatch = playableCards.find(item => isActionCard(item.card.value) && playerHand.length <= 3);
       chosenIndex = actionMatch ? actionMatch.index : playableCards[0].index;
     }
@@ -275,13 +306,14 @@ function botAI() {
   if (chosenIndex !== -1) {
     playCard('bot', chosenIndex);
   } else {
-    logAction("AI has no valid move and draws a card.");
+    logAction("AI has no valid moves and draws a card.");
     drawCards('bot', 1);
     switchTurn();
   }
 }
 
-// --- Chaos Frenzy Meter & Events ---
+
+// --- Chaos Frenzy Meter & Random Events ---
 function increaseChaos(amount) {
   chaosMeter += amount;
   if (chaosMeter >= 100) {
@@ -297,8 +329,8 @@ function triggerRandomChaosEvent() {
 
   const events = [
     "⚡ YELLOW OUTBURST: Everyone draws 2 cards!",
-    "🌪️ REVERSE CHAOS: Deck auto-shuffles!",
-    "💥 FRENZY DROP: Top card morphs into a random value!"
+    "🌪️ REVERSE CHAOS: Deck auto-shuffles and top card morphs!",
+    "💥 FRENZY DROP: Top card morphs into a random action card!"
   ];
   const chosenEvent = events[Math.floor(Math.random() * events.length)];
   
@@ -317,10 +349,11 @@ function triggerRandomChaosEvent() {
   setTimeout(() => {
     eventBannerEl.classList.add('hidden');
     updateUI();
-  }, 3000);
+  }, 3200);
 }
 
-// --- Battle Mini-Game ---
+
+// --- Sudden Card Battle Mini-Game ---
 function triggerBattleModal() {
   battleModalEl.classList.remove('hidden');
   let playerScore = 0;
@@ -331,13 +364,17 @@ function triggerBattleModal() {
   const bScoreEl = document.getElementById('bot-battle-score');
   const timerEl = document.getElementById('battle-timer');
 
+  pScoreEl.textContent = `You: ${playerScore}`;
+  bScoreEl.textContent = `AI: ${botScore}`;
+  timerEl.textContent = `Time Left: ${timeLeft}s`;
+
   clashBtn.onclick = () => {
     playerScore++;
     pScoreEl.textContent = `You: ${playerScore}`;
   };
 
   const difficulty = aiDifficultySelect.value;
-  const botMultiplier = difficulty === 'insane' ? 2.5 : difficulty === 'chaotic' ? 1.8 : 1.2;
+  const botMultiplier = difficulty === 'insane' ? 2.6 : difficulty === 'chaotic' ? 1.9 : 1.2;
 
   const interval = setInterval(() => {
     botScore += Math.floor(Math.random() * botMultiplier) + 1;
@@ -353,10 +390,10 @@ function triggerBattleModal() {
       if (playerScore >= botScore) {
         stats.battlesWon++;
         saveStats();
-        logAction(`⚔️ You WON the Card Battle (${playerScore} vs ${botScore})! AI draws 4 cards.`);
+        logAction(`⚔️ You WON the Card Battle (${playerScore} vs ${botScore})! AI draws 4 penalty cards.`);
         drawCards('bot', 4);
       } else {
-        logAction(`⚔️ AI WON the Card Battle (${botScore} vs ${playerScore})! You draw 4 cards.`);
+        logAction(`⚔️ AI WON the Card Battle (${botScore} vs ${playerScore})! You draw 4 penalty cards.`);
         drawCards('player', 4);
       }
       switchTurn();
@@ -364,7 +401,8 @@ function triggerBattleModal() {
   }, 1000);
 }
 
-// --- UI & Rendering ---
+
+// --- UI Renderer & Logger ---
 function updateUI() {
   drawCountEl.textContent = deck.length;
   botCardCountEl.textContent = botHand.length;
@@ -373,29 +411,31 @@ function updateUI() {
     topCardValueEl.textContent = discardPile[discardPile.length - 1].value;
   }
 
+  // Render Player Hand
   playerHandEl.innerHTML = '';
   playerHand.forEach((card, index) => {
     const cardEl = document.createElement('div');
-    cardEl.className = 'card yellow-card';
-    cardEl.innerHTML = `<span>${card.value}</span>`;
+    cardEl.className = 'card yellow-card interactive-card';
+    cardEl.innerHTML = `<span class="card-value">${card.value}</span>`;
     cardEl.onclick = () => {
       if (currentTurn === 'player') playCard('player', index);
     };
     playerHandEl.appendChild(cardEl);
   });
 
+  // Render Bot Card Backs
   botHandEl.innerHTML = '';
   botHand.forEach(() => {
     const cardEl = document.createElement('div');
     cardEl.className = 'card back-card';
-    cardEl.innerHTML = `<span>?</span>`;
+    cardEl.innerHTML = `<span class="card-label">?</span>`;
     botHandEl.appendChild(cardEl);
   });
 
   let turnText = currentTurn === 'player' ? 'Player 1 (You)' : 'AI Opponent';
   if (playerHasShield) turnText += ' 🛡️ [Shielded]';
   turnIndicatorEl.innerHTML = `Current Turn: <strong>${turnText}</strong>`;
-  chaosBarEl.style.width = `${chaosMeter}%`;
+  chaosFillEl.style.width = `${chaosMeter}%`;
 }
 
 function logAction(msg) {
@@ -405,7 +445,8 @@ function logAction(msg) {
   actionLogEl.scrollTop = actionLogEl.scrollHeight;
 }
 
-// --- Win Conditions & Stats ---
+
+// --- Win Condition & Stats ---
 function checkWinConditions() {
   if (playerHand.length === 0) {
     playSound('win');
@@ -427,7 +468,8 @@ function saveStats() {
   localStorage.setItem('uno_frenzy_stats', JSON.stringify(stats));
 }
 
-// --- Event Listeners ---
+
+// --- Global Event Listeners ---
 drawPileEl.addEventListener('click', () => {
   if (currentTurn === 'player') {
     drawCards('player', 1);
@@ -453,4 +495,5 @@ statsBtn.addEventListener('click', () => {
 });
 closeStatsBtn.addEventListener('click', () => statsModal.classList.add('hidden'));
 
+// Initialize on window load
 window.onload = initGame;
