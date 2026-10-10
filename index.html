@@ -1,22 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Uno Frenzy</title>
-  <style>
-    body {
-      background-color: #ffd700;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 50px;
-    }
-    h1 { color: #111; font-size: 3rem; }
-    p { font-size: 1.2rem; }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Uno Frenzy ⚡</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <h1>WELCOME TO UNO FRENZY!</h1>
-  <p>Oops... All Yellows & Chaotic Rules Coming Soon!</p>
+  <div id="game-container">
+    <header>
+      <h1>UNO FRENZY ⚡</h1>
+      <p class="subtitle">All Yellow. Total Chaos.</p>
+    </header>
+
+    <!-- Chaos Event Banner -->
+    <div id="event-banner" class="hidden">
+      <span id="event-text">CHAOS EVENT TRIGGERED!</span>
+    </div>
+
+    <!-- Active Table Area -->
+    <main class="table-area">
+      <div class="deck-area">
+        <div id="draw-pile" class="card back-card">
+          <span>DRAW</span>
+          <small id="draw-count">52</small>
+        </div>
+        <div id="discard-pile" class="card yellow-card">
+          <span id="top-card-value">--</span>
+        </div>
+      </div>
+
+      <div class="status-panel">
+        <div id="turn-indicator">Current Turn: <strong>Player 1</strong></div>
+        <div id="chaos-meter-container">
+          <label>Chaos Frenzy Meter</label>
+          <div class="progress-bar">
+            <div id="chaos-bar" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Player Hands -->
+    <section class="players-section">
+      <div id="bot-hand-container" class="hand-container">
+        <h3>AI Opponent (<span id="bot-card-count">7</span> cards)</h3>
+        <div id="bot-hand" class="hand"></div>
+      </div>
+
+      <div id="player-hand-container" class="hand-container">
+        <h3>Your Hand</h3>
+        <div id="player-hand" class="hand"></div>
+      </div>
+    </section>
+
+    <!-- Game Log -->
+    <footer class="log-container">
+      <h3>Battle & Chaos Log</h3>
+      <div id="action-log"></div>
+    </footer>
+  </div>
+
+  <!-- Battle Modal Overlay -->
+  <div id="battle-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>⚔️ SUDDEN CARD BATTLE! ⚔️</h2>
+      <p>Mash your card to overpower the opponent!</p>
+      <div class="battle-arena">
+        <div id="player-battle-score" class="score-box">You: 0</div>
+        <button id="clash-btn" class="frenzy-btn">CLASH!</button>
+        <div id="bot-battle-score" class="score-box">AI: 0</div>
+      </div>
+      <div id="battle-timer">Time Left: 3s</div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
 </body>
 </html>
