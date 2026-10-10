@@ -3,15 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Uno Frenzy ⚡</title>
+  <title>Uno Frenzy ⚡ All Yellow Chaos</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="game-container">
+  <div id="game-container" class="">
     <header>
       <h1>UNO FRENZY ⚡</h1>
       <p class="subtitle">All Yellow. Total Chaos.</p>
+      <div class="top-controls">
+        <button id="sound-toggle-btn" class="icon-btn" title="Toggle Sound">🔊 Sound: ON</button>
+        <button id="rules-btn" class="icon-btn">📖 Rules</button>
+        <button id="stats-btn" class="icon-btn">🏆 Stats</button>
+      </div>
     </header>
+
+    <!-- Settings Bar -->
+    <div class="settings-bar">
+      <label for="ai-difficulty">AI Difficulty:</label>
+      <select id="ai-difficulty">
+        <option value="easy">Easy</option>
+        <option value="chaotic" selected>Chaotic</option>
+        <option value="insane">Insane 💀</option>
+      </select>
+    </div>
 
     <!-- Chaos Event Banner -->
     <div id="event-banner" class="hidden">
@@ -21,7 +36,7 @@
     <!-- Active Table Area -->
     <main class="table-area">
       <div class="deck-area">
-        <div id="draw-pile" class="card back-card">
+        <div id="draw-pile" class="card back-card" title="Click to Draw">
           <span>DRAW</span>
           <small id="draw-count">52</small>
         </div>
@@ -65,13 +80,47 @@
   <div id="battle-modal" class="modal hidden">
     <div class="modal-content">
       <h2>⚔️ SUDDEN CARD BATTLE! ⚔️</h2>
-      <p>Mash your card to overpower the opponent!</p>
+      <p>Mash the CLASH button as fast as you can to overpower the AI!</p>
       <div class="battle-arena">
         <div id="player-battle-score" class="score-box">You: 0</div>
         <button id="clash-btn" class="frenzy-btn">CLASH!</button>
         <div id="bot-battle-score" class="score-box">AI: 0</div>
       </div>
       <div id="battle-timer">Time Left: 3s</div>
+    </div>
+  </div>
+
+  <!-- Rules Modal -->
+  <div id="rules-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>📖 UNO FRENZY RULEBOOK</h2>
+      <ul class="rules-list">
+        <li><strong>All Yellow:</strong> Every card is yellow! Match numbers or action cards.</li>
+        <li><strong>Action Cards:</strong> <br>
+          <em>SKIP / REVERSE:</em> Skips turn.<br>
+          <em>+2 / MEGA +4:</em> Forces opponent to draw extra cards.<br>
+          <em>SWAP:</em> Exchanges hands entirely!<br>
+          <em>BATTLE:</em> Triggers a frantic tapping mini-game!<br>
+          <em>WILDFIRE:</em> Everyone draws 1 card.<br>
+          <em>SHIELD:</em> Protects you from incoming penalty cards.
+        </li>
+        <li><strong>Chaos Meter:</strong> Every card played fills the meter. At 100%, a random server-wide chaos event strikes!</li>
+      </ul>
+      <button id="close-rules-btn" class="frenzy-btn small-btn">Got It!</button>
+    </div>
+  </div>
+
+  <!-- Stats Modal -->
+  <div id="stats-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>🏆 CAREER STATS</h2>
+      <div class="stats-grid">
+        <p>Wins: <span id="stat-wins">0</span></p>
+        <p>Losses: <span id="stat-losses">0</span></p>
+        <p>Win Streak: <span id="stat-streak">0</span></p>
+        <p>Battles Won: <span id="stat-battles">0</span></p>
+      </div>
+      <button id="close-stats-btn" class="frenzy-btn small-btn">Close</button>
     </div>
   </div>
 
