@@ -1,0 +1,801 @@
+     1→// ─────────────────────────────────────────────────────────────
+     2→// UNO FRENZY — PvP authoritative socket.io game server
+     3→// (mini-services/uno-pvp — bun + socket.io, port 3005)
+     4→//
+     5→// Runs the FULL UNO FRENZY ruleset authoritatively per room,
+     6→// mirroring the CPU-game reducer (src/hooks/use-uno-game.ts)
+     7→// exactly — with player NAMES instead of "You"/"CPU".
+     8→// All shared rules logic is imported from the app's pure
+     9→// engine modules (bun resolves the TS natively).
+    10→// ─────────────────────────────────────────────────────────────
+    11→import { createServer } from 'http'
+    12→import { Server, type Socket } from 'socket.io'
+    13→
+    14→import {
+    15→  BATTLE_MS,
+    16→  BATTLE_PENALTY,
+    17→  BATTLE_READY_MS,
+    18→  BATTLE_RESULT_MS,
+    19→  BATTLE_TIE_PENALTY,
+    20→  CHAOS_EVENT_META,
+    21→  FRENZY_PER_CARD,
+    22→  cardName,
+    23→  createInitialGame,
+    24→  isPlayable,
+    25→  makeRandomNumberCard,
+    26→  pickChaosEvent,
+    27→  shuffle,
+    28→} from '../../src/lib/uno/engine'
+    29→import {
+    30→  PVP_CARD_SOUNDS,
+    31→  PVP_EVENT,
+    32→  PVP_SERVICE_PORT,
+    33→  type PvpAck,
+    34→  type PvpBattleView,
+    35→  type PvpGameOverView,
+    36→  type PvpPhase,
+    37→  type PvpRoomView,
+    38→  type Seat,
+    39→} from '../../src/lib/uno/pvp-protocol'
+    40→import type {
+    41→  BattlePhase,
+    42→  ChaosBannerInfo,
+    43→  LogEntry,
+    44→  LogKind,
+    45→  SoundName,
+    46→  UnoCard,
+    47→} from '../../src/lib/uno/types'
+    48→
+    49→// ─────────────────────────────────────────────────────────────
+    50→// Typed socket contract (from the shared protocol constants)
+    51→// ─────────────────────────────────────────────────────────────
+    52→
+    53→type ClientToServerEvents = {
+    54→  [PVP_EVENT.ROOM_CREATE]: (payload: { name: string }, ack: (res: PvpAck) => void) => void
+    55→  [PVP_EVENT.ROOM_JOIN]: (
+    56→    payload: { name: string; roomCode: string },
+    57→    ack: (res: PvpAck) => void,
+    58→  ) => void
+    59→  [PVP_EVENT.GAME_PLAY]: (payload: { cardId: string }) => void
+    60→  [PVP_EVENT.GAME_DRAW]: () => void
+    61→  [PVP_EVENT.GAME_KEEP]: () => void
+    62→  [PVP_EVENT.BATTLE_MASH]: () => void
+    63→  [PVP_EVENT.GAME_REMATCH]: () => void
+    64→  [PVP_EVENT.ROOM_LEAVE]: () => void
+    65→}
+    66→
+    67→type ServerToClientEvents = {
+    68→  [PVP_EVENT.ROOM_STATE]: (view: PvpRoomView) => void
+    69→  [PVP_EVENT.ROOM_ERROR]: (message: string) => void
+    70→}
+    71→
+    72→interface SocketData {
+    73→  roomCode: string | null
+    74→  seat: Seat | null
+    75→}
+    76→
+    77→type PvpSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>
+    78→
+    79→// ─────────────────────────────────────────────────────────────
+    80→// Room state
+    81→// ─────────────────────────────────────────────────────────────
+    82→
+    83→interface BattleTimers {
+    84→  ready: ReturnType<typeof setTimeout> | null
+    85→  tick: ReturnType<typeof setInterval> | null
+    86→  result: ReturnType<typeof setTimeout> | null
+    87→}
+    88→
+    89→/** live sudden-card-battle state (serialized into PvpBattleView) */
+    90→interface RoomBattle {
+    91→  phase: BattlePhase
+    92→  msLeft: number
+    93→  scores: [number, number]
+    94→  winner: Seat | 'tie' | null
+    95→  initiator: Seat
+    96→  timers: BattleTimers
+    97→}
+    98→
+    99→interface Room {
+   100→  code: string
+   101→  sockets: [PvpSocket | null, PvpSocket | null]
+   102→  names: [string, string]
+   103→  phase: PvpPhase
+   104→  /** increments per match — clients re-key hands for deal animations */
+   105→  gameId: number
+   106→  deck: UnoCard[]
+   107→  discard: UnoCard[]
+   108→  hands: [UnoCard[], UnoCard[]]
+   109→  turn: Seat
+   110→  /** chaos frenzy meter 0–100 */
+   111→  frenzy: number
+   112→  chaosPending: boolean
+   113→  chaosBanner: ChaosBannerInfo | null
+   114→  bannerSeq: number
+   115→  /** increments on every chaos event — clients shake the screen */
+   116→  shakeSeq: number
+   117→  shields: [boolean, boolean]
+   118→  pendingDrawn: [UnoCard | null, UnoCard | null]
+   119→  battle: RoomBattle | null
+   120→  gameOver: PvpGameOverView | null
+   121→  log: LogEntry[]
+   122→  logSeq: number
+   123→  /** scheduled "unplayable drawn card" auto-keeps, per seat */
+   124→  autoKeep: [ReturnType<typeof setTimeout> | null, ReturnType<typeof setTimeout> | null]
+   125→}
+   126→
+   127→const rooms = new Map<string, Room>()
+   128→
+   129→const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no I L O 0 1
+   130→const CODE_LENGTH = 4
+   131→const LOG_CAP = 80
+   132→const AUTO_KEEP_MS = 1300
+   133→
+   134→const other = (seat: Seat): Seat => (seat === 0 ? 1 : 0)
+   135→
+   136→function topCard(room: Room): UnoCard | null {
+   137→  return room.discard.length > 0 ? room.discard[room.discard.length - 1] : null
+   138→}
+   139→
+   140→function pushLog(room: Room, text: string, kind: LogKind, sound?: SoundName): void {
+   141→  room.logSeq += 1
+   142→  room.log.push(sound ? { id: room.logSeq, text, kind, sound } : { id: room.logSeq, text, kind })
+   143→  if (room.log.length > LOG_CAP) room.log = room.log.slice(-LOG_CAP)
+   144→}
+   145→
+   146→// ─────────────────────────────────────────────────────────────
+   147→// Deck / penalty helpers (mirror the CPU-game reducer)
+   148→// ─────────────────────────────────────────────────────────────
+   149→
+   150→function drawCard(room: Room): UnoCard | null {
+   151→  if (room.deck.length === 0) {
+   152→    if (room.discard.length <= 1) return null
+   153→    const top = room.discard[room.discard.length - 1]
+   154→    room.deck = shuffle(room.discard.slice(0, -1))
+   155→    room.discard = [top]
+   156→    pushLog(room, 'Deck empty — discard pile blasts back into the deck!', 'info', 'swap')
+   157→  }
+   158→  return room.deck.shift() ?? null
+   159→}
+   160→
+   161→function applyPenalty(room: Room, seat: Seat, count: number): void {
+   162→  const name = room.names[seat]
+   163→  if (room.shields[seat]) {
+   164→    room.shields[seat] = false
+   165→    pushLog(room, 'SHIELD absorbs the attack — no cards drawn!', 'shield', 'shield')
+   166→    return
+   167→  }
+   168→  let drawn = 0
+   169→  for (let i = 0; i < count; i += 1) {
+   170→    const card = drawCard(room)
+   171→    if (!card) break
+   172→    room.hands[seat].push(card)
+   173→    drawn += 1
+   174→  }
+   175→  if (drawn > 0) {
+   176→    pushLog(room, `${name} draws ${drawn} card${drawn === 1 ? '' : 's'}!`, 'penalty', 'penalty')
+   177→  } else {
+   178→    pushLog(room, `${name} would draw, but every card is in play!`, 'info')
+   179→  }
+   180→}
+   181→
+   182→// ─────────────────────────────────────────────────────────────
+   183→// Timer teardown helpers (every callback is also state-guarded)
+   184→// ─────────────────────────────────────────────────────────────
+   185→
+   186→function clearBattleTimers(battle: RoomBattle | null): void {
+   187→  if (!battle) return
+   188→  if (battle.timers.ready) clearTimeout(battle.timers.ready)
+   189→  if (battle.timers.tick) clearInterval(battle.timers.tick)
+   190→  if (battle.timers.result) clearTimeout(battle.timers.result)
+   191→  battle.timers.ready = null
+   192→  battle.timers.tick = null
+   193→  battle.timers.result = null
+   194→}
+   195→
+   196→function clearAutoKeep(room: Room, seat?: Seat): void {
+   197→  if (seat === undefined) {
+   198→    clearAutoKeep(room, 0)
+   199→    clearAutoKeep(room, 1)
+   200→    return
+   201→  }
+   202→  if (room.autoKeep[seat]) clearTimeout(room.autoKeep[seat])
+   203→  room.autoKeep[seat] = null
+   204→}
+   205→
+   206→// ─────────────────────────────────────────────────────────────
+   207→// Chaos Frenzy (mirror APPLY_CHAOS — randomness lives here)
+   208→// ─────────────────────────────────────────────────────────────
+   209→
+   210→function tryResolveChaos(room: Room): void {
+   211→  // defer while a battle runs or the match is over — re-checked
+   212→  // after every mutation and when a battle closes
+   213→  if (!room.chaosPending || room.phase !== 'playing') return
+   214→  room.chaosPending = false
+   215→
+   216→  const event = pickChaosEvent()
+   217→  const meta = CHAOS_EVENT_META[event]
+   218→  room.bannerSeq += 1
+   219→  room.chaosBanner = { id: room.bannerSeq, name: meta.name, description: meta.description }
+   220→  room.shakeSeq += 1
+   221→  pushLog(room, `CHAOS EVENT: ${meta.name} — ${meta.description}`, 'chaos', 'chaos')
+   222→
+   223→  if (event === 'draw-rain') {
+   224→    applyPenalty(room, 0, 2)
+   225→    applyPenalty(room, 1, 2)
+   226→  } else if (event === 'reshuffle') {
+   227→    const shuffled = shuffle([...room.deck, ...room.discard.slice(0, -1)])
+   228→    if (shuffled.length > 0) {
+   229→      room.deck = shuffled
+   230→      room.discard = room.discard.length > 0 ? [room.discard[room.discard.length - 1]] : []
+   231→      pushLog(room, `Deck rebuilt — ${room.deck.length} cards ready.`, 'info')
+   232→    }
+   233→  } else {
+   234→    // top card morph
+   235→    const morph =
+   236→      room.deck.length > 0
+   237→        ? room.deck.splice(Math.floor(Math.random() * room.deck.length), 1)[0]
+   238→        : makeRandomNumberCard()
+   239→    const oldTop = room.discard.pop()
+   240→    if (oldTop) room.deck.push(oldTop)
+   241→    room.discard.push(morph)
+   242→    pushLog(room, `The top card morphs into ${cardName(morph)}!`, 'chaos')
+   243→  }
+   244→}
+   245→
+   246→// ─────────────────────────────────────────────────────────────
+   247→// Card effects (mirror the reducer's playCard exactly)
+   248→// ─────────────────────────────────────────────────────────────
+   249→
+   250→function applyPlay(room: Room, seat: Seat, card: UnoCard): void {
+   251→  const name = room.names[seat]
+   252→  const opp = other(seat)
+   253→
+   254→  // remove from hand → top of discard
+   255→  room.hands[seat] = room.hands[seat].filter((c) => c.id !== card.id)
+   256→  room.discard.push(card)
+   257→  if (room.pendingDrawn[seat]?.id === card.id) {
+   258→    room.pendingDrawn[seat] = null
+   259→    clearAutoKeep(room, seat)
+   260→  }
+   261→
+   262→  const remaining = room.hands[seat].length
+   263→
+   264→  pushLog(room, `${name} plays ${cardName(card)}!`, 'play', PVP_CARD_SOUNDS[card.kind])
+   265→
+   266→  // chaos frenzy meter
+   267→  room.frenzy += FRENZY_PER_CARD
+   268→  if (room.frenzy >= 100) {
+   269→    room.frenzy -= 100
+   270→    room.chaosPending = true
+   271→  }
+   272→
+   273→  // UNO shout
+   274→  if (remaining === 1) {
+   275→    pushLog(room, `${name} SHOUTS UNO!`, 'info', 'uno')
+   276→  }
+   277→
+   278→  // WIN — first to empty their hand (pending effects are void)
+   279→  if (remaining === 0) {
+   280→    clearBattleTimers(room.battle)
+   281→    room.battle = null
+   282→    room.phase = 'game-over'
+   283→    room.gameOver = { winner: seat, reason: 'empty-hand' }
+   284→    room.pendingDrawn = [null, null]
+   285→    clearAutoKeep(room)
+   286→    pushLog(room, `${name} WINS! Empty hand — FRENZY MASTER!`, 'win', 'win')
+   287→    return
+   288→  }
+   289→
+   290→  // card effects
+   291→  switch (card.kind) {
+   292→    case 'number':
+   293→      room.turn = opp
+   294→      break
+   295→    case 'skip':
+   296→      pushLog(room, `${room.names[opp]} is SKIPPED — ${name} goes again!`, 'info')
+   297→      room.turn = seat
+   298→      break
+   299→    case 'reverse':
+   300→      pushLog(room, 'REVERSE — the turn bounces right back!', 'info')
+   301→      room.turn = seat
+   302→      break
+   303→    case 'draw2':
+   304→      applyPenalty(room, opp, 2)
+   305→      pushLog(room, `${room.names[opp]} is SKIPPED — ${name} goes again!`, 'info')
+   306→      room.turn = seat
+   307→      break
+   308→    case 'draw4':
+   309→      applyPenalty(room, opp, 4)
+   310→      pushLog(room, `${room.names[opp]} is SKIPPED — ${name} goes again!`, 'info')
+   311→      room.turn = seat
+   312→      break
+   313→    case 'swap': {
+   314→      const swapped = room.hands[0]
+   315→      room.hands[0] = room.hands[1]
+   316→      room.hands[1] = swapped
+   317→      pushLog(room, 'HANDS SWAPPED — chaos reigns!', 'chaos', 'swap')
+   318→      room.turn = opp
+   319→      break
+   320→    }
+   321→    case 'wildfire':
+   322→      pushLog(room, 'WILDFIRE — everyone draws 1!', 'chaos', 'wildfire')
+   323→      applyPenalty(room, 0, 1)
+   324→      applyPenalty(room, 1, 1)
+   325→      room.turn = opp
+   326→      break
+   327→    case 'shield':
+   328→      room.shields[seat] = true
+   329→      pushLog(room, `${name} raises a SHIELD!`, 'shield', 'shield')
+   330→      room.turn = opp
+   331→      break
+   332→    case 'battle':
+   333→      pushLog(room, 'SUDDEN CARD BATTLE! MASH TO WIN!', 'battle', 'battle')
+   334→      startBattle(room, seat)
+   335→      break
+   336→  }
+   337→}
+   338→
+   339→// ─────────────────────────────────────────────────────────────
+   340→// Sudden Card Battle lifecycle (server timers, guarded callbacks)
+   341→// ─────────────────────────────────────────────────────────────
+   342→
+   343→function startBattle(room: Room, initiator: Seat): void {
+   344→  room.phase = 'battle'
+   345→  const battle: RoomBattle = {
+   346→    phase: 'ready',
+   347→    msLeft: BATTLE_MS,
+   348→    scores: [0, 0],
+   349→    winner: null,
+   350→    initiator,
+   351→    timers: { ready: null, tick: null, result: null },
+   352→  }
+   353→  room.battle = battle
+   354→
+   355→  battle.timers.ready = setTimeout(() => {
+   356→    if (room.battle !== battle || room.phase !== 'battle') return
+   357→    battle.phase = 'mash'
+   358→    broadcast(room)
+   359→
+   360→    battle.timers.tick = setInterval(() => {
+   361→      if (room.battle !== battle || room.phase !== 'battle') {
+   362→        clearBattleTimers(battle)
+   363→        return
+   364→      }
+   365→      battle.msLeft = Math.max(0, battle.msLeft - 100)
+   366→      if (battle.msLeft <= 0) {
+   367→        if (battle.timers.tick) clearInterval(battle.timers.tick)
+   368→        battle.timers.tick = null
+   369→        resolveBattle(room, battle)
+   370→      }
+   371→      broadcast(room)
+   372→    }, 100)
+   373→  }, BATTLE_READY_MS)
+   374→}
+   375→
+   376→function resolveBattle(room: Room, battle: RoomBattle): void {
+   377→  battle.phase = 'result'
+   378→  const [a, b] = battle.scores
+   379→  const result: Seat | 'tie' = a === b ? 'tie' : a > b ? 0 : 1
+   380→  battle.winner = result
+   381→
+   382→  if (result === 'tie') {
+   383→    pushLog(room, `BATTLE TIE ${a}—${b}!`, 'battle', 'penalty')
+   384→    applyPenalty(room, 0, BATTLE_TIE_PENALTY)
+   385→    applyPenalty(room, 1, BATTLE_TIE_PENALTY)
+   386→  } else {
+   387→    const winner: Seat = result
+   388→    const loser = other(winner)
+   389→    pushLog(
+   390→      room,
+   391→      `${room.names[winner]} WINS THE BATTLE ${battle.scores[winner]}—${battle.scores[loser]}!`,
+   392→      'battle',
+   393→      'battle',
+   394→    )
+   395→    applyPenalty(room, loser, BATTLE_PENALTY)
+   396→  }
+   397→
+   398→  battle.timers.result = setTimeout(() => {
+   399→    if (room.battle !== battle || room.phase !== 'battle') return
+   400→    clearBattleTimers(battle)
+   401→    room.battle = null
+   402→    room.phase = 'playing'
+   403→    room.turn = other(battle.initiator)
+   404→    tryResolveChaos(room)
+   405→    broadcast(room)
+   406→  }, BATTLE_RESULT_MS)
+   407→}
+   408→
+   409→// ─────────────────────────────────────────────────────────────
+   410→// Match / room lifecycle
+   411→// ─────────────────────────────────────────────────────────────
+   412→
+   413→function newMatch(room: Room, rematch: boolean): void {
+   414→  clearBattleTimers(room.battle)
+   415→  room.battle = null
+   416→  clearAutoKeep(room)
+   417→
+   418→  const setup = createInitialGame()
+   419→  room.deck = setup.deck
+   420→  room.discard = [setup.top]
+   421→  room.hands = [setup.playerHand, setup.aiHand]
+   422→  room.turn = Math.random() < 0.5 ? 0 : 1
+   423→  room.gameId += 1
+   424→  room.phase = 'playing'
+   425→  room.frenzy = 0
+   426→  room.chaosPending = false
+   427→  room.chaosBanner = null
+   428→  room.shields = [false, false]
+   429→  room.pendingDrawn = [null, null]
+   430→  room.gameOver = null
+   431→  room.log = []
+   432→  if (rematch) pushLog(room, 'REMATCH!', 'info', 'click')
+   433→  pushLog(room, `${room.names[0]} VS ${room.names[1]} — ${room.names[room.turn]} GOES FIRST!`, 'info')
+   434→}
+   435→
+   436→function generateRoomCode(): string {
+   437→  let code = ''
+   438→  for (let i = 0; i < CODE_LENGTH; i += 1) {
+   439→    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]
+   440→  }
+   441→  return code
+   442→}
+   443→
+   444→function allocateRoomCode(): string {
+   445→  let code = generateRoomCode()
+   446→  while (rooms.has(code)) code = generateRoomCode()
+   447→  return code
+   448→}
+   449→
+   450→function createRoom(host: PvpSocket, name: string): Room {
+   451→  const room: Room = {
+   452→    code: allocateRoomCode(),
+   453→    sockets: [host, null],
+   454→    names: [name, ''],
+   455→    phase: 'waiting',
+   456→    gameId: 0,
+   457→    deck: [],
+   458→    discard: [],
+   459→    hands: [[], []],
+   460→    turn: 0,
+   461→    frenzy: 0,
+   462→    chaosPending: false,
+   463→    chaosBanner: null,
+   464→    bannerSeq: 0,
+   465→    shakeSeq: 0,
+   466→    shields: [false, false],
+   467→    pendingDrawn: [null, null],
+   468→    battle: null,
+   469→    gameOver: null,
+   470→    log: [],
+   471→    logSeq: 0,
+   472→    autoKeep: [null, null],
+   473→  }
+   474→  rooms.set(room.code, room)
+   475→  return room
+   476→}
+   477→
+   478→function destroyRoom(room: Room): void {
+   479→  clearBattleTimers(room.battle)
+   480→  room.battle = null
+   481→  clearAutoKeep(room)
+   482→  room.sockets = [null, null]
+   483→  rooms.delete(room.code)
+   484→}
+   485→
+   486→function getRoomSeat(socket: PvpSocket): { room: Room; seat: Seat } | null {
+   487→  const { roomCode, seat } = socket.data
+   488→  if (!roomCode || seat === null) return null
+   489→  const room = rooms.get(roomCode)
+   490→  if (!room) return null
+   491→  if (room.sockets[seat] !== socket) return null
+   492→  return { room, seat }
+   493→}
+   494→
+   495→function keepDrawn(room: Room, seat: Seat, auto: boolean): void {
+   496→  room.pendingDrawn[seat] = null
+   497→  clearAutoKeep(room, seat)
+   498→  pushLog(room, auto ? 'No match — turn passes.' : `${room.names[seat]} keeps the drawn card.`, 'info')
+   499→  room.turn = other(seat)
+   500→  tryResolveChaos(room)
+   501→  broadcast(room)
+   502→}
+   503→
+   504→// ─────────────────────────────────────────────────────────────
+   505→// Leave / disconnect — forfeit handling
+   506→// ─────────────────────────────────────────────────────────────
+   507→
+   508→function handleLeave(socket: PvpSocket): void {
+   509→  const ctx = getRoomSeat(socket)
+   510→  if (!ctx) return
+   511→  const { room, seat } = ctx
+   512→
+   513→  socket.data.roomCode = null
+   514→  socket.data.seat = null
+   515→
+   516→  if (room.phase === 'waiting') {
+   517→    // lobby cancelled before a challenger arrived — only the host is in
+   518→    destroyRoom(room)
+   519→    console.log(`[uno-pvp] room ${room.code} destroyed (lobby cancelled by ${room.names[seat]})`)
+   520→    return
+   521→  }
+   522→
+   523→  if (room.phase === 'game-over') {
+   524→    // match already finished — leaving only updates presence,
+   525→    // it never rewrites an already-decided result
+   526→    room.sockets[seat] = null
+   527→    if (!room.sockets[0] && !room.sockets[1]) {
+   528→      destroyRoom(room)
+   529→      console.log(`[uno-pvp] room ${room.code} destroyed (empty after game-over)`)
+   530→      return
+   531→    }
+   532→    broadcast(room)
+   533→    return
+   534→  }
+   535→
+   536→  // leaving a live match = forfeit
+   537→  clearBattleTimers(room.battle)
+   538→  room.battle = null
+   539→  clearAutoKeep(room)
+   540→  room.pendingDrawn = [null, null]
+   541→  room.phase = 'game-over'
+   542→  room.gameOver = { winner: other(seat), reason: 'forfeit' }
+   543→  room.sockets[seat] = null
+   544→  pushLog(room, `${room.names[seat]} LEFT THE MATCH — FORFEIT!`, 'win', 'win')
+   545→
+   546→  if (!room.sockets[0] && !room.sockets[1]) {
+   547→    destroyRoom(room)
+   548→    console.log(`[uno-pvp] room ${room.code} destroyed (last player left)`)
+   549→    return
+   550→  }
+   551→  broadcast(room)
+   552→  console.log(`[uno-pvp] ${room.names[seat]} left room ${room.code} mid-match — forfeit`)
+   553→}
+   554→
+   555→// ─────────────────────────────────────────────────────────────
+   556→// Personalized room view (one per connected socket)
+   557→// ─────────────────────────────────────────────────────────────
+   558→
+   559→function viewFor(room: Room, seat: Seat): PvpRoomView {
+   560→  const opp = other(seat)
+   561→  let battle: PvpBattleView | null = null
+   562→  if (room.battle) {
+   563→    const scores: [number, number] = [room.battle.scores[0], room.battle.scores[1]]
+   564→    battle = {
+   565→      phase: room.battle.phase,
+   566→      msLeft: room.battle.msLeft,
+   567→      scores,
+   568→      winner: room.battle.winner,
+   569→    }
+   570→  }
+   571→  const gameOver: PvpGameOverView | null = room.gameOver
+   572→    ? { winner: room.gameOver.winner, reason: room.gameOver.reason }
+   573→    : null
+   574→  return {
+   575→    roomCode: room.code,
+   576→    you: seat,
+   577→    names: [room.names[0], room.names[1]],
+   578→    phase: room.phase,
+   579→    turn: room.turn,
+   580→    hand: room.hands[seat],
+   581→    opponentCardCount: room.hands[opp].length,
+   582→    topCard: topCard(room),
+   583→    deckCount: room.deck.length,
+   584→    frenzy: room.frenzy,
+   585→    shields: [room.shields[0], room.shields[1]],
+   586→    pendingDrawn: room.pendingDrawn[seat],
+   587→    opponentDeciding: room.pendingDrawn[opp] !== null,
+   588→    battle,
+   589→    gameOver,
+   590→    opponentConnected: room.sockets[opp] !== null,
+   591→    gameId: room.gameId,
+   592→    log: room.log,
+   593→    chaosBanner: room.chaosBanner,
+   594→    shakeSeq: room.shakeSeq,
+   595→  }
+   596→}
+   597→
+   598→function broadcast(room: Room): void {
+   599→  for (const seat of [0, 1] as const) {
+   600→    const socket = room.sockets[seat]
+   601→    if (socket) socket.emit(PVP_EVENT.ROOM_STATE, viewFor(room, seat))
+   602→  }
+   603→}
+   604→
+   605→// ─────────────────────────────────────────────────────────────
+   606→// Input sanitation
+   607→// ─────────────────────────────────────────────────────────────
+   608→
+   609→function sanitizeName(raw: unknown): string | null {
+   610→  if (typeof raw !== 'string') return null
+   611→  const cleaned = raw.trim().replace(/\s+/g, ' ')
+   612→  if (cleaned.length < 1 || cleaned.length > 12) return null
+   613→  return cleaned
+   614→}
+   615→
+   616→function ackSender(ack: unknown): (res: PvpAck) => void {
+   617→  return (res) => {
+   618→    if (typeof ack === 'function') ack(res)
+   619→  }
+   620→}
+   621→
+   622→// ─────────────────────────────────────────────────────────────
+   623→// Server setup (same pattern as examples/websocket/server.ts)
+   624→// ─────────────────────────────────────────────────────────────
+   625→
+   626→const httpServer = createServer()
+   627→const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(
+   628→  httpServer,
+   629→  {
+   630→    // DO NOT change the path, it is used by Caddy to forward the request to the correct port
+   631→    path: '/',
+   632→    cors: {
+   633→      origin: '*',
+   634→      methods: ['GET', 'POST'],
+   635→    },
+   636→    pingTimeout: 60000,
+   637→    pingInterval: 25000,
+   638→  },
+   639→)
+   640→
+   641→io.on('connection', (socket) => {
+   642→  socket.data.roomCode = null
+   643→  socket.data.seat = null
+   644→  console.log(`[uno-pvp] socket ${socket.id} connected (${io.engine.clientsCount} online)`)
+   645→
+   646→  socket.on(PVP_EVENT.ROOM_CREATE, (payload, ack) => {
+   647→    const respond = ackSender(ack)
+   648→    if (getRoomSeat(socket)) handleLeave(socket) // safety: one room per socket
+   649→    const name = sanitizeName(payload?.name)
+   650→    if (!name) {
+   651→      respond({ ok: false, error: 'invalid-name' })
+   652→      return
+   653→    }
+   654→    const room = createRoom(socket, name)
+   655→    socket.data.roomCode = room.code
+   656→    socket.data.seat = 0
+   657→    socket.emit(PVP_EVENT.ROOM_STATE, viewFor(room, 0))
+   658→    respond({ ok: true, roomCode: room.code })
+   659→    console.log(`[uno-pvp] ${name} created room ${room.code}`)
+   660→  })
+   661→
+   662→  socket.on(PVP_EVENT.ROOM_JOIN, (payload, ack) => {
+   663→    const respond = ackSender(ack)
+   664→    if (getRoomSeat(socket)) handleLeave(socket) // safety: one room per socket
+   665→    const rawCode = typeof payload?.roomCode === 'string' ? payload.roomCode : ''
+   666→    const code = rawCode.trim().toUpperCase()
+   667→    if (!/^[A-Z0-9]{4}$/.test(code)) {
+   668→      respond({ ok: false, error: 'invalid-code' })
+   669→      return
+   670→    }
+   671→    const room = rooms.get(code)
+   672→    if (!room) {
+   673→      respond({ ok: false, error: 'not-found' })
+   674→      return
+   675→    }
+   676→    if (room.sockets[1] !== null) {
+   677→      respond({ ok: false, error: 'full' })
+   678→      return
+   679→    }
+   680→    const name = sanitizeName(payload?.name)
+   681→    if (!name) {
+   682→      respond({ ok: false, error: 'invalid-name' })
+   683→      return
+   684→    }
+   685→    room.sockets[1] = socket
+   686→    room.names[1] = name
+   687→    socket.data.roomCode = room.code
+   688→    socket.data.seat = 1
+   689→    newMatch(room, false)
+   690→    broadcast(room)
+   691→    respond({ ok: true })
+   692→    console.log(`[uno-pvp] ${name} joined room ${room.code} — match started (game #${room.gameId})`)
+   693→  })
+   694→
+   695→  socket.on(PVP_EVENT.GAME_PLAY, (payload) => {
+   696→    const ctx = getRoomSeat(socket)
+   697→    if (!ctx) return
+   698→    const { room, seat } = ctx
+   699→    const cardId = typeof payload?.cardId === 'string' ? payload.cardId : ''
+   700→    if (!cardId) return
+   701→    if (room.phase !== 'playing' || room.turn !== seat) return
+   702→    const card = room.hands[seat].find((c) => c.id === cardId)
+   703→    if (!card) return
+   704→    const pending = room.pendingDrawn[seat]
+   705→    if (pending !== null && pending.id !== card.id) return
+   706→    if (!isPlayable(card, topCard(room))) return
+   707→
+   708→    applyPlay(room, seat, card)
+   709→    tryResolveChaos(room)
+   710→    broadcast(room)
+   711→  })
+   712→
+   713→  socket.on(PVP_EVENT.GAME_DRAW, () => {
+   714→    const ctx = getRoomSeat(socket)
+   715→    if (!ctx) return
+   716→    const { room, seat } = ctx
+   717→    if (room.phase !== 'playing' || room.turn !== seat || room.pendingDrawn[seat] !== null) return
+   718→
+   719→    const card = drawCard(room)
+   720→    if (!card) {
+   721→      pushLog(room, `${room.names[seat]} has no cards to draw — turn passes.`, 'info')
+   722→      room.turn = other(seat)
+   723→      tryResolveChaos(room)
+   724→      broadcast(room)
+   725→      return
+   726→    }
+   727→    room.hands[seat].push(card)
+   728→    room.pendingDrawn[seat] = card
+   729→    pushLog(room, `${room.names[seat]} draws a card.`, 'info', 'draw')
+   730→
+   731→    // unplayable drawn card auto-passes after a short beat
+   732→    if (!isPlayable(card, topCard(room))) {
+   733→      const cardId = card.id
+   734→      room.autoKeep[seat] = setTimeout(() => {
+   735→        if (room.phase !== 'playing' || room.pendingDrawn[seat]?.id !== cardId) return
+   736→        keepDrawn(room, seat, true)
+   737→      }, AUTO_KEEP_MS)
+   738→    }
+   739→    tryResolveChaos(room)
+   740→    broadcast(room)
+   741→  })
+   742→
+   743→  socket.on(PVP_EVENT.GAME_KEEP, () => {
+   744→    const ctx = getRoomSeat(socket)
+   745→    if (!ctx) return
+   746→    const { room, seat } = ctx
+   747→    if (room.phase !== 'playing' || room.pendingDrawn[seat] === null) return
+   748→    keepDrawn(room, seat, false)
+   749→  })
+   750→
+   751→  socket.on(PVP_EVENT.BATTLE_MASH, () => {
+   752→    const ctx = getRoomSeat(socket)
+   753→    if (!ctx) return
+   754→    const { room, seat } = ctx
+   755→    const battle = room.battle
+   756→    if (!battle || room.phase !== 'battle' || battle.phase !== 'mash') return
+   757→    battle.scores[seat] += 1
+   758→    broadcast(room)
+   759→  })
+   760→
+   761→  socket.on(PVP_EVENT.GAME_REMATCH, () => {
+   762→    const ctx = getRoomSeat(socket)
+   763→    if (!ctx) return
+   764→    const { room } = ctx
+   765→    if (room.phase !== 'game-over') return
+   766→    if (!room.sockets[0] || !room.sockets[1]) return
+   767→    newMatch(room, true)
+   768→    broadcast(room)
+   769→  })
+   770→
+   771→  socket.on(PVP_EVENT.ROOM_LEAVE, () => handleLeave(socket))
+   772→
+   773→  socket.on('disconnect', () => {
+   774→    console.log(`[uno-pvp] socket ${socket.id} disconnected`)
+   775→    handleLeave(socket)
+   776→  })
+   777→})
+   778→
+   779→httpServer.listen(PVP_SERVICE_PORT, () => {
+   780→  console.log(`UNO FRENZY PvP server running on port ${PVP_SERVICE_PORT} (socket.io path "/")`)
+   781→})
+   782→
+   783→// Graceful shutdown
+   784→process.on('SIGTERM', () => {
+   785→  console.log('Received SIGTERM signal, shutting down PvP server...')
+   786→  for (const room of rooms.values()) destroyRoom(room)
+   787→  httpServer.close(() => {
+   788→    console.log('UNO FRENZY PvP server closed')
+   789→    process.exit(0)
+   790→  })
+   791→})
+   792→
+   793→process.on('SIGINT', () => {
+   794→  console.log('Received SIGINT signal, shutting down PvP server...')
+   795→  for (const room of rooms.values()) destroyRoom(room)
+   796→  httpServer.close(() => {
+   797→    console.log('UNO FRENZY PvP server closed')
+   798→    process.exit(0)
+   799→  })
+   800→})
+   801→
