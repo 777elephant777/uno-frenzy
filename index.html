@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UNO FRENZY — Chaotic Arcade Card Game</title>
+  <meta name="description" content="Every card is yellow. Match numbers, unleash chaos events, mash through sudden card battles and empty your hand first — solo vs CPU or 2-4 player local mayhem.">
+  <meta name="theme-color" content="#ffea00">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%83%8F%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div id="app">
+
+    <!-- ══════════ TOP TICKER ══════════ -->
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker-inner">
+        <span>⚡ UNO FRENZY ⚡ EVERY CARD IS YELLOW ⚡ ZERO MERCY ⚡ 100% CHAOS ⚡ PASS THE DEVICE ⚡ UNLEASH THE METER ⚡ UNO FRENZY ⚡ EVERY CARD IS YELLOW ⚡ ZERO MERCY ⚡ 100% CHAOS ⚡ PASS THE DEVICE ⚡ UNLEASH THE METER ⚡</span>
+        <span>⚡ UNO FRENZY ⚡ EVERY CARD IS YELLOW ⚡ ZERO MERCY ⚡ 100% CHAOS ⚡ PASS THE DEVICE ⚡ UNLEASH THE METER ⚡ UNO FRENZY ⚡ EVERY CARD IS YELLOW ⚡ ZERO MERCY ⚡ 100% CHAOS ⚡ PASS THE DEVICE ⚡ UNLEASH THE METER ⚡</span>
+      </div>
+    </div>
+
+    <!-- ══════════ MENU SCREEN ══════════ -->
+    <section id="screen-menu" class="screen">
+      <div class="menu-wrap">
+        <div class="logo-wrap">
+          <div class="float-card fc1"><div class="card num"><span class="corner tl">7</span><span class="big">7</span></div></div>
+          <div class="float-card fc2"><div class="card act"><span class="aicon">🔥</span><span class="alabel">WILDFIRE</span></div></div>
+          <div class="float-card fc3"><div class="card act"><span class="aicon">+4</span><span class="alabel">MEGA</span></div></div>
+          <h1 class="logo-uno">UNO</h1>
+          <div class="logo-frenzy">FRENZY</div>
+          <p class="tagline">THE 100% YELLOW CARD RIOT</p>
+        </div>
+
+        <div class="menu-btns">
+          <button id="btn-vsai" class="btn btn-lg">🤖 VS CPU</button>
+          <button id="btn-pvp" class="btn btn-lg btn-white">👥 LOCAL PVP <span class="btn-sub">2–4 PLAYERS · ONE DEVICE</span></button>
+          <div class="btn-row">
+            <button id="btn-rules-menu" class="btn" aria-label="How to play">📖 RULES</button>
+            <button id="btn-stats-menu" class="btn" aria-label="Career stats">📊 STATS</button>
+            <button class="btn sound-btn" aria-label="Toggle sound">🔊</button>
+          </div>
+        </div>
+      </div>
+      <footer class="menu-foot">
+        <p>UNO FRENZY — 100% LOCAL CHAOS · NO SERVERS · NO ACCOUNTS · NO MERCY</p>
+      </footer>
+    </section>
+
+    <!-- ══════════ SETUP SCREEN ══════════ -->
+    <section id="screen-setup" class="screen hidden">
+      <div class="setup-wrap">
+        <div class="panel setup-panel">
+          <div id="setup-body"><!-- built by JS --></div>
+        </div>
+      </div>
+      <footer class="menu-foot">
+        <p>SETUP — PICK YOUR POISON ☠</p>
+      </footer>
+    </section>
+
+    <!-- ══════════ GAME SCREEN ══════════ -->
+    <section id="screen-game" class="screen hidden">
+
+      <header id="game-header">
+        <div class="gh-left">
+          <div class="gh-logo">UNO<span>FRENZY</span></div>
+          <div id="gh-mode" class="gh-mode">VS CPU</div>
+        </div>
+        <div class="gh-right">
+          <button class="icon-btn" id="btn-rules-game" aria-label="Rules" title="Rules">📖</button>
+          <button class="icon-btn" id="btn-stats-game" aria-label="Stats" title="Career stats">📊</button>
+          <button class="icon-btn sound-btn" aria-label="Toggle sound" title="Toggle sound">🔊</button>
+          <button class="icon-btn btn-quit" id="btn-quit" aria-label="Quit to menu" title="Quit to menu">✖</button>
+        </div>
+      </header>
+
+      <div id="players-row" aria-label="Players"></div>
+
+      <main id="table">
+        <div class="pile-block">
+          <div id="draw-pile" class="stack" role="button" tabindex="0" aria-label="Draw a card">
+            <div class="stack-cards">
+              <div class="card back sc3"></div>
+              <div class="card back sc2"></div>
+              <div class="card back sc1"></div>
+            </div>
+            <div class="stack-count" id="deck-count">57</div>
+          </div>
+          <div class="pile-label">DRAW PILE</div>
+        </div>
+
+        <div id="center-info">
+          <div id="dir-ind" class="dir-ind" aria-label="Turn direction">▶▶</div>
+          <div class="turn-plate">
+            <div class="turn-tag">NOW PLAYING</div>
+            <div id="turn-name" class="turn-name">—</div>
+          </div>
+          <div id="turn-count" class="turn-count">TURN 1</div>
+        </div>
+
+        <div class="pile-block">
+          <div id="discard-pile" class="discard"></div>
+          <div class="pile-label">DISCARD</div>
+        </div>
+      </main>
+
+      <div id="chaos-wrap">
+        <div class="meter-head">
+          <span class="meter-label">CHAOS FRENZY METER</span>
+          <span class="meter-pct" id="meter-pct">0%</span>
+        </div>
+        <div id="chaos-meter" role="meter" aria-label="Chaos frenzy meter">
+          <div id="meter-fill" class="meter-fill"></div>
+          <span class="meter-skull" aria-hidden="true">💀</span>
+        </div>
+      </div>
+
+      <div id="hand-area">
+        <div class="hand-head">
+          <span id="hand-label" class="hand-label">YOUR HAND</span>
+          <span id="hand-count" class="hand-count"></span>
+        </div>
+        <div id="hand"></div>
+        <div class="hand-tools">
+          <button id="btn-draw" class="btn btn-draw">🂠 DRAW A CARD</button>
+          <span class="hand-hint" id="hand-hint">or tap the deck</span>
+        </div>
+      </div>
+
+      <footer id="battle-log">
+        <div class="log-head">
+          <span>⚔ BATTLE LOG</span>
+          <span id="log-mode">—</span>
+        </div>
+        <div id="log-entries" role="log" aria-live="polite"></div>
+      </footer>
+    </section>
+
+    <!-- ══════════ PASS DEVICE OVERLAY (hot-seat privacy) ══════════ -->
+    <div id="pass-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Pass the device">
+      <div class="panel pass-panel">
+        <div class="pass-emoji" aria-hidden="true">📱</div>
+        <h2 class="pass-head">PASS THE DEVICE TO</h2>
+        <div id="pass-name" class="pass-name">PLAYER 2</div>
+        <button id="pass-btn" class="btn btn-lg">I'M READY — SHOW MY HAND</button>
+        <p class="pass-note">everyone else: eyes off the screen 🙈</p>
+      </div>
+    </div>
+
+    <!-- ══════════ DRAWN CARD PROMPT ══════════ -->
+    <div id="drawn-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Card drawn">
+      <div class="panel drawn-panel">
+        <h2 class="panel-title">🂠 CARD DRAWN — IT'S PLAYABLE!</h2>
+        <div id="drawn-card" class="drawn-slot"></div>
+        <div class="btn-row">
+          <button id="drawn-play" class="btn btn-lg">PLAY IT</button>
+          <button id="drawn-keep" class="btn btn-lg btn-white">KEEP IT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ SWAP TARGET PICKER ══════════ -->
+    <div id="target-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Pick a swap target">
+      <div class="panel">
+        <h2 class="panel-title">⇄ SWAP — PICK A VICTIM</h2>
+        <div id="target-list" class="target-list"></div>
+        <div class="btn-row">
+          <button id="target-cancel" class="btn btn-white btn-sm">CANCEL</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ SUDDEN CARD BATTLE ══════════ -->
+    <div id="battle-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Sudden card battle">
+      <div class="battle-box">
+        <div class="battle-title">⚔ SUDDEN CARD BATTLE ⚔</div>
+        <div class="battle-sub" id="battle-sub">MASH YOUR SIDE — MOST TAPS IN 3 SECONDS WINS!</div>
+        <div class="battle-stage">
+          <button class="battle-side side-left" id="bs-left" type="button">
+            <span class="bs-vs-badge">CHALLENGER</span>
+            <span class="bs-name">—</span>
+            <span class="bs-count">0</span>
+            <span class="bs-bar-wrap"><span class="bs-bar"></span></span>
+            <span class="bs-hint">TAP! TAP! TAP! <span class="bs-keys">KEYS: A S D F</span></span>
+          </button>
+          <button class="battle-side side-right" id="bs-right" type="button">
+            <span class="bs-vs-badge">DEFENDER</span>
+            <span class="bs-name">—</span>
+            <span class="bs-count">0</span>
+            <span class="bs-bar-wrap"><span class="bs-bar"></span></span>
+            <span class="bs-hint">TAP! TAP! TAP! <span class="bs-keys">KEYS: J K L ;</span></span>
+          </button>
+        </div>
+        <div id="battle-countdown" class="hidden" aria-hidden="true">3</div>
+        <div id="battle-result" class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- ══════════ CHAOS EVENT BANNER ══════════ -->
+    <div id="chaos-overlay" class="hidden" aria-hidden="true">
+      <div class="chaos-inner">
+        <div id="chaos-name" class="chaos-stamp">DRAW RAIN</div>
+        <div id="chaos-desc" class="chaos-desc">everyone draws 2</div>
+      </div>
+    </div>
+
+    <!-- ══════════ GAME OVER ══════════ -->
+    <div id="gameover-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Game over">
+      <div class="panel go-panel">
+        <div class="go-emoji" aria-hidden="true">🏆</div>
+        <div id="go-name" class="go-name">PLAYER 1</div>
+        <div class="go-sub">WINS THE FRENZY!</div>
+        <div id="go-stats" class="go-stats"></div>
+        <div class="btn-row">
+          <button id="btn-rematch" class="btn btn-lg">REMATCH</button>
+          <button id="btn-gomenu" class="btn btn-lg btn-white">MAIN MENU</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ RULES MODAL ══════════ -->
+    <div id="rules-modal" class="overlay hidden" role="dialog" aria-modal="true" aria-label="How to play">
+      <div class="panel modal-panel">
+        <button class="modal-close" data-close="rules-modal" aria-label="Close rules">✖</button>
+        <h2 class="panel-title">📖 HOW TO FRENZY</h2>
+
+        <div class="rule-sec">
+          <h3><span class="rule-num">1</span> THE GIMMICK</h3>
+          <p><b>EVERY CARD IS YELLOW.</b> No colors to match — you match by <b>NUMBER</b> or throw down <b>ACTION</b> cards.</p>
+          <ul>
+            <li>Number on number → <b>same number</b>.</li>
+            <li>Top card is an ACTION → <b>any number</b> is legal.</li>
+            <li>Action cards are <b>ALWAYS playable</b>.</li>
+            <li>Empty your hand first to win.</li>
+          </ul>
+        </div>
+
+        <div class="rule-sec">
+          <h3><span class="rule-num">2</span> ACTION CARDS</h3>
+          <table class="rule-table">
+            <tr><td><span class="chip c-yellow">🚫 SKIP</span></td><td>Next player loses their turn.</td></tr>
+            <tr><td><span class="chip c-yellow">🔄 REVERSE</span></td><td>Turn order flips. In 2-player it bounces right back to you.</td></tr>
+            <tr><td><span class="chip c-yellow">+2 PENALTY</span></td><td>Next player draws 2 and is skipped.</td></tr>
+            <tr><td><span class="chip c-red">+4 MEGA</span></td><td>Next player draws 4 and is skipped. Devastating.</td></tr>
+            <tr><td><span class="chip c-orange">⇄ SWAP</span></td><td>Trade hands with a victim of your choice. Brutal when you're losing.</td></tr>
+            <tr><td><span class="chip c-orange">🔥 WILDFIRE</span></td><td>EVERYONE draws 1 card — including you.</td></tr>
+            <tr><td><span class="chip c-green">🛡 SHIELD</span></td><td>Raises a barrier that blocks the next time you're forced to draw (+2, +4, battle penalties, wildfire, chaos draws) — then it breaks.</td></tr>
+            <tr><td><span class="chip c-red">⚔ BATTLE</span></td><td>Challenges the next player to a SUDDEN CARD BATTLE. Loser draws 4. Tie → both draw 2.</td></tr>
+          </table>
+        </div>
+
+        <div class="rule-sec rule-hl">
+          <h3><span class="rule-num">3</span> CHAOS FRENZY METER</h3>
+          <p>Every card played charges the meter by <b>+8%</b>. At <b>100%</b> a random CHAOS EVENT detonates:</p>
+          <ul>
+            <li><b>DRAW RAIN</b> — everyone draws 2.</li>
+            <li><b>DECK EXPLOSION</b> — the discard pile blasts back into the deck.</li>
+            <li><b>TOP CARD MORPH</b> — the pile shapeshifts into a random card.</li>
+          </ul>
+        </div>
+
+        <div class="rule-sec">
+          <h3><span class="rule-num">4</span> SUDDEN CARD BATTLE</h3>
+          <p>A <b>3-second tap war</b>: both players mash their side of the screen (or keyboard: left <kbd>A S D F</kbd> · right <kbd>J K L ;</kbd>). Most taps wins. The loser draws <b>4</b>. A CPU opponent mashes at a rate set by its difficulty.</p>
+        </div>
+
+        <div class="rule-sec">
+          <h3><span class="rule-num">5</span> MODES</h3>
+          <ul>
+            <li><b>VS CPU</b> — you against a bot: <span class="chip c-green">EASY</span> <span class="chip c-orange">CHAOTIC</span> <span class="chip c-red">INSANE</span></li>
+            <li><b>LOCAL PVP</b> — 2–4 players on one device (hot-seat). The screen hides your hand between turns: <b>pass the device</b> when the shield screen shows up. Mix in CPU seats if you're short on friends.</li>
+          </ul>
+          <p>Career stats (wins, losses, streaks, battles won) are saved in your browser for every player name.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ STATS MODAL ══════════ -->
+    <div id="stats-modal" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Career stats">
+      <div class="panel modal-panel">
+        <button class="modal-close" data-close="stats-modal" aria-label="Close stats">✖</button>
+        <h2 class="panel-title">📊 CAREER STATS</h2>
+        <div id="stats-body" class="stats-body"></div>
+        <div class="btn-row">
+          <button id="stats-reset" class="btn btn-red btn-sm">RESET STATS</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ QUIT CONFIRM MODAL ══════════ -->
+    <div id="quit-modal" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Quit game">
+      <div class="panel">
+        <h2 class="panel-title">🏃 BAIL OUT?</h2>
+        <p class="quit-note">Quit to the menu? This match won't be recorded.</p>
+        <div class="btn-row">
+          <button id="quit-yes" class="btn btn-red">QUIT</button>
+          <button id="quit-no" class="btn">KEEP PLAYING</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
